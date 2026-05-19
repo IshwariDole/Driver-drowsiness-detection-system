@@ -44,10 +44,31 @@ def play_alert():
 
 # Main loop
 while True:
-    _, frame = cap.read()
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    ret, frame = cap.read()
+    if not ret or frame is None:
+        # Skip if camera did not return a valid frame
+        continue
 
-    faces = detector(gray)
+    # Ensure frame is 8-bit and contiguous for downstream libraries
+    if frame.dtype != np.uint8:
+        frame = cv2.normalize(frame, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    frame = np.ascontiguousarray(frame)
+
+    # Convert to grayscale for detection and landmarking
+    if frame.ndim == 2:
+        gray = frame
+    else:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # dlib requires 8-bit grayscale or RGB images, and contiguous memory
+    gray = np.ascontiguousarray(gray, dtype=np.uint8)
+
+    try:
+        faces = detector(gray)
+    except RuntimeError:
+        # If dlib rejects the frame (unexpected dtype/format), skip this frame
+        continue
+
     face_frame = frame.copy()
 
     for face in faces:
