@@ -20,6 +20,12 @@ active = 0
 status = ""
 color = (0, 0, 0)
 
+# Head-turn detection parameters and counters
+LOOK_OFFSET_THRESHOLD = 0.15  # normalized horizontal nose offset vs. inter-ocular distance
+LOOK_CONSEC_FRAMES = 6        # frames to confirm a left/right look
+look_left = 0
+look_right = 0
+
 # Function to compute Euclidean distance
 def compute(ptA, ptB):
     dist = np.linalg.norm(ptA - ptB)
@@ -37,6 +43,34 @@ def blinked(a, b, c, d, e, f):
         return 1  # drowsy
     else:
         return 0  # closed
+
+# Head-turn helpers
+def nose_horizontal_offset_ratio(landmarks: np.ndarray) -> float:
+    """Return normalized horizontal offset of nose tip from eyes midpoint.
+
+    Positive => nose to the right of midpoint; Negative => to the left.
+    Normalized by inter-ocular distance to be scale-invariant.
+    """
+    left_eye_pts = landmarks[36:42]
+    right_eye_pts = landmarks[42:48]
+    left_center = left_eye_pts.mean(axis=0)
+    right_center = right_eye_pts.mean(axis=0)
+    eyes_center_x = (left_center[0] + right_center[0]) / 2.0
+    interocular_distance = float(np.linalg.norm(right_center - left_center))
+
+    # Using landmark index 30 for nose tip in 68-point model
+    nose_tip_x = float(landmarks[30][0])
+
+    return (nose_tip_x - eyes_center_x) / (interocular_distance + 1e-6)
+
+def head_turn_direction(landmarks: np.ndarray, threshold: float = LOOK_OFFSET_THRESHOLD):
+    """Classify head turn as ('left'|'right'|'center'), plus raw offset ratio."""
+    offset = nose_horizontal_offset_ratio(landmarks)
+    if offset <= -threshold:
+        return "left", offset
+    if offset >= threshold:
+        return "right", offset
+    return "center", offset
 
 # Function to play alert sound in a separate thread
 def play_alert():
@@ -91,6 +125,30 @@ while True:
             if active > 6:
                 status = "Active :)"
                 color = (0, 255, 0)
+
+        # ---- Head turn detection (left/right looking away) ----
+        direction, _ = head_turn_direction(landmarks)
+
+        if direction == "left":
+            look_left += 1
+            look_right = 0
+        elif direction == "right":
+            look_right += 1
+            look_left = 0
+        else:
+            look_left = 0
+            look_right = 0
+
+        # Only override status if not already in sleep/drowsy state
+        if status not in ("SLEEPING !!!", "Drowsy !"):
+            if look_left > LOOK_CONSEC_FRAMES:
+                status = "Looking Left"
+                color = (0, 0, 255)
+                play_alert()
+            elif look_right > LOOK_CONSEC_FRAMES:
+                status = "Looking Right"
+                color = (0, 0, 255)
+                play_alert()
 
         # Display status text
         cv2.putText(frame, status, (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
